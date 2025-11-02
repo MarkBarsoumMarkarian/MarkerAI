@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Studio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; }
+    </style>
+</head>
+<body>
+    <div id="app"></div>
+
+    <script type="module">
+        // ============================================
+        // CONFIGURATION - EDIT THESE BEFORE SHARING
+        // ============================================
+        
+        const LOCKED_MODE = true; // Set to true to hide API key and lock settings
+        const ADMIN_PASSWORD = "some123"; // Password to unlock admin features
+        
+        // Your API key - users won't see this if LOCKED_MODE is true
+        const EMBEDDED_API_KEY = ""; // Put your Groq API key here: "gsk_..."
+        
+        // Default personality when someone opens the app
+        const DEFAULT_PERSONALITY = "Mark";
+        
+        // ============================================
+        
+        // Load saved data from memory
+        const savedData = {
+            apiKey: EMBEDDED_API_KEY, // Use embedded key as default
+            selectedPersonality: DEFAULT_PERSONALITY,
+            personalities: {
+                Mark: {
+                    name: 'Mark',
+                    prompt: 'you are Gen Z, you are a teaser in a flirty way, sometimes you find the opportunity to compliment others but not always, you dont share much information about you unless you are asked to, you are Mark Barsoum Markarian, you studied your masters in physiology at AUB and your bachelors in biochemistry at USEK, you play tennis, favorite player Elina Avanesyan, you really love figure skating, favorite skater Adelia Petrosyan, you used to be a ping pong champion, you specialize in dysregulated miRNA in cancer, you are a bioinformatician, you are really good with electronics, you are a good genome editor, you like discovery not routine, even if you are asked a personal information about yourself and dont know the answer of it, try to fabricate a good answer, you are Armenian, you are, Apostolic.',
+                    visible: true
+                },
+                creative: {
+                    name: 'Creative Writer',
+                    prompt: 'You are a creative writer who loves storytelling, poetry, and imaginative ideas.',
+                    visible: true
+                },
+                teacher: {
+                    name: 'Patient Teacher',
+                    prompt: 'You are a patient, encouraging teacher who explains complex topics simply.',
+                    visible: true
+                },
+                coder: {
+                    name: 'Code Mentor',
+                    prompt: 'You are an expert programmer who helps with coding questions.',
+                    visible: true
+                }
+            }
+        };
+
+        // Try to load from memory (only in unlocked mode)
+        if (!LOCKED_MODE) {
+            try {
+                const stored = JSON.parse(sessionStorage.getItem('aiStudioData') || '{}');
+                if (stored.apiKey) savedData.apiKey = stored.apiKey;
+                if (stored.selectedPersonality) savedData.selectedPersonality = stored.selectedPersonality;
+                if (stored.personalities) savedData.personalities = stored.personalities;
+            } catch (e) {
+                console.log('No saved data found');
+            }
+        }
+        
+        // State
+        let state = {
+            messages: [],
+            input: '',
+            loading: false,
+            showSettings: false,
+            apiKey: savedData.apiKey,
+            selectedPersonality: savedData.selectedPersonality,
+            isUnlocked: !LOCKED_MODE,
+            passwordInput: '',
+            personalities: savedData.personalities,
+            newPersonality: { name: '', prompt: '', visible: true }
+        };
+
+        // Save to memory (only if not locked)
+        function saveToMemory() {
+            if (LOCKED_MODE && !state.isUnlocked) return;
+            
+            try {
+                sessionStorage.setItem('aiStudioData', JSON.stringify({
+                    apiKey: state.apiKey,
+                    selectedPersonality: state.selectedPersonality,
+                    personalities: state.personalities
+                }));
+            } catch (e) {
+                console.error('Failed to save data');
+            }
+        }
+
+        // Send message to AI
+        async function sendMessage() {
+            if (!state.input.trim() || state.loading) return;
+            
+            if (!state.apiKey) {
+                alert('Please add your Groq API key in Settings first!\n\nGet a free key at: https://console.groq.com/keys');
+                state.showSettings = true;
+                render();
+                return;
+            }
+
+            const userMessage = { role: 'user', content: state.input };
+            state.messages.push(userMessage);
+            state.input = '';
+            state.loading = true;
+            render();
+
+            try {
+                const personality = state.personalities[state.selectedPersonality];
+                const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${state.apiKey}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model: 'llama-3.3-70b-versatile',
+                        messages: [
+                            { role: 'system', content: personality.prompt },
+                            ...state.messages.slice(-10),
+                        ],
+                        temperature: 0.7,
+                        max_tokens: 1024,
+                    }),
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error?.message || 'API request failed');
+                }
+
+                const data = await response.json();
+                const aiMessage = { role: 'assistant', content: data.choices[0].message.content };
+                state.messages.push(aiMessage);
+            } catch (error) {
+                state.messages.push({ 
+                    role: 'assistant', 
+                    content: `Error: ${error.message}. Please check your API key in Settings.`
+                });
+            } finally {
+                state.loading = false;
+                render();
+                scrollToBottom();
+            }
+        }
+
+        // Scroll to bottom
+        function scrollToBottom() {
+            setTimeout(() => {
+                const messagesDiv = document.getElementById('messages');
+                if (messagesDiv) messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            }, 100);
+        }
+
+        // Check password
+        function checkPassword() {
+            if (state.passwordInput === ADMIN_PASSWORD) {
+                state.isUnlocked = true;
+                state.passwordInput = '';
+                render();
+            } else {
+                alert('Incorrect password');
+            }
+        }
+
+        // Add custom personality
+        function addCustomPersonality() {
+            if (!state.newPersonality.name || !state.newPersonality.prompt) return;
+            
+            const id = state.newPersonality.name.toLowerCase().replace(/\s+/g, '-');
+            state.personalities[id] = { ...state.newPersonality };
+            state.newPersonality = { name: '', prompt: '', visible: true };
+            saveToMemory();
+            render();
+        }
+
+        // Toggle personality visibility
+        function togglePersonalityVisibility(id) {
+            state.personalities[id].visible = !state.personalities[id].visible;
+            saveToMemory();
+            render();
+        }
+
+        // Clear chat
+        function clearChat() {
+            if (confirm('Clear all messages?')) {
+                state.messages = [];
+                render();
+            }
+        }
+
+        // Select personality
+        function selectPersonality(id) {
+            state.selectedPersonality = id;
+            saveToMemory();
+            render();
+        }
+
+        // Update API key
+        function updateApiKey(value) {
+            state.apiKey = value;
+            saveToMemory();
+        }
+
+        // Get visible personalities
+        function getVisiblePersonalities() {
+            return Object.entries(state.personalities).filter(([_, p]) => p.visible);
+        }
+
+        // Render function
+        function render() {
+            const visiblePersonalities = getVisiblePersonalities();
+            
+            document.getElementById('app').innerHTML = `
+                <div class="flex h-screen bg-slate-900">
+                    <!-- Sidebar -->
+                    <div class="w-80 bg-slate-800 border-r border-slate-700 flex flex-col">
+                        <!-- Logo & New Chat -->
+                        <div class="p-6 border-b border-slate-700">
+                            <h1 class="text-2xl font-bold text-white mb-4">🤖 AI Studio</h1>
+                            <button onclick="window.clearChat()" class="w-full px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors">
+                                ➕ New Chat
+                            </button>
+                        </div>
+
+                        <!-- Personalities List -->
+                        <div class="flex-1 overflow-y-auto p-4">
+                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Personalities</h3>
+                            ${visiblePersonalities.map(([id, p]) => `
+                                <button 
+                                    onclick="window.selectPersonality('${id}')"
+                                    class="w-full mb-2 p-3 rounded-lg text-left transition-colors ${
+                                        state.selectedPersonality === id
+                                            ? 'bg-purple-600 text-white shadow-lg'
+                                            : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+                                    }"
+                                >
+                                    <span class="font-medium">${p.name}</span>
+                                </button>
+                            `).join('')}
+                        </div>
+
+                        <!-- Settings Button -->
+                        <div class="p-4 border-t border-slate-700">
+                            <button onclick="window.toggleSettings()" class="w-full px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors">
+                                ⚙️ Settings
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Main Chat Area -->
+                    <div class="flex-1 flex flex-col">
+                        <!-- Header -->
+                        <div class="p-6 bg-slate-800 border-b border-slate-700">
+                            <h2 class="text-xl font-bold text-white">${state.personalities[state.selectedPersonality].name}</h2>
+                            <p class="text-sm text-slate-400 mt-1">Powered by Groq & Llama 3.3 70B</p>
+                        </div>
+
+                        <!-- Messages Area -->
+                        <div id="messages" class="flex-1 overflow-y-auto p-6">
+                            ${state.messages.length === 0 ? `
+                                <div class="flex flex-col items-center justify-center h-full text-center">
+                                    <div class="text-6xl mb-4">💬</div>
+                                    <h3 class="text-2xl font-bold text-white mb-2">Start a conversation</h3>
+                                    <p class="text-slate-400">Choose a personality and send a message!</p>
+                                    ${state.apiKey ? '<p class="text-green-400 text-sm mt-2">✓ Ready to chat</p>' : '<p class="text-amber-400 text-sm mt-2">⚠ Add API key in Settings</p>'}
+                                </div>
+                            ` : `
+                                <div class="space-y-4">
+                                    ${state.messages.map(msg => `
+                                        <div class="flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}">
+                                            <div class="max-w-2xl px-5 py-3 rounded-2xl ${
+                                                msg.role === 'user'
+                                                    ? 'bg-purple-600 text-white'
+                                                    : 'bg-slate-700 text-white'
+                                            }">
+                                                <p class="whitespace-pre-wrap">${msg.content}</p>
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                    ${state.loading ? `
+                                        <div class="flex justify-start">
+                                            <div class="bg-slate-700 px-5 py-3 rounded-2xl">
+                                                <div class="flex gap-1">
+                                                    <div class="w-2 h-2 bg-purple-400 rounded-full animate-bounce"></div>
+                                                    <div class="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+                                                    <div class="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style="animation-delay: 0.4s"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            `}
+                        </div>
+
+                        <!-- Input Area -->
+                        <div class="p-6 bg-slate-800 border-t border-slate-700">
+                            <div class="flex gap-3">
+                                <input
+                                    type="text"
+                                    id="messageInput"
+                                    value="${state.input}"
+                                    placeholder="Type your message..."
+                                    ${state.loading ? 'disabled' : ''}
+                                    class="flex-1 px-5 py-3 bg-slate-700 border border-slate-600 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                />
+                                <button
+                                    onclick="window.sendMessage()"
+                                    ${state.loading || !state.input.trim() ? 'disabled' : ''}
+                                    class="px-6 py-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-medium transition-colors"
+                                >
+                                    Send
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    ${state.showSettings ? `
+                        <!-- Settings Modal -->
+                        <div class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+                            <div class="bg-slate-800 rounded-2xl border border-slate-700 p-8 max-w-2xl w-full max-h-screen overflow-y-auto">
+                                <h2 class="text-2xl font-bold text-white mb-6">⚙️ Settings</h2>
+                                
+                                ${LOCKED_MODE && !state.isUnlocked ? `
+                                    <!-- Locked Mode Message -->
+                                    <div class="mb-6 p-4 bg-green-900 bg-opacity-30 border border-green-700 rounded-lg">
+                                        <h3 class="text-green-400 font-bold mb-2">✓ Ready to Use!</h3>
+                                        <p class="text-sm text-slate-300">
+                                            This AI Studio has been pre-configured with an API key and personalities. 
+                                            Just start chatting!
+                                        </p>
+                                    </div>
+                                    
+                                    <!-- Admin Login -->
+                                    <div class="mb-6 p-4 bg-slate-700 rounded-lg border border-slate-600">
+                                        <h3 class="text-white font-bold mb-3">🔒 Admin Access</h3>
+                                        <p class="text-sm text-slate-400 mb-3">Enter password to manage settings</p>
+                                        <input
+                                            type="password"
+                                            id="passwordInput"
+                                            value="${state.passwordInput}"
+                                            placeholder="Enter admin password"
+                                            class="w-full px-4 py-3 bg-slate-600 border border-slate-500 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500 mb-3"
+                                        />
+                                        <button
+                                            onclick="window.checkPassword()"
+                                            class="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors"
+                                        >
+                                            Unlock Admin Panel
+                                        </button>
+                                    </div>
+                                ` : `
+                                    <!-- API Key Section -->
+                                    <div class="mb-6">
+                                        <label class="block text-white font-medium mb-2">Groq API Key</label>
+                                        <input
+                                            type="password"
+                                            id="apiKeyInput"
+                                            value="${state.apiKey}"
+                                            placeholder="gsk_..."
+                                            class="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                        />
+                                        <p class="text-sm text-slate-400 mt-2">
+                                            Get a free API key at 
+                                            <a href="https://console.groq.com/keys" target="_blank" class="text-purple-400 hover:underline">
+                                                console.groq.com/keys
+                                            </a>
+                                        </p>
+                                        ${state.apiKey ? '<p class="text-green-400 text-sm mt-1">✓ API Key configured</p>' : ''}
+                                    </div>
+
+                                    <!-- Personality Visibility -->
+                                    <div class="mb-6 p-4 bg-slate-700 rounded-lg border border-slate-600">
+                                        <h3 class="text-lg font-bold text-white mb-3">👁️ Personality Visibility</h3>
+                                        <p class="text-sm text-slate-400 mb-3">Control which personalities are visible</p>
+                                        ${Object.entries(state.personalities).map(([id, p]) => `
+                                            <label class="flex items-center justify-between py-2 px-2 text-white cursor-pointer hover:bg-slate-600 rounded">
+                                                <span>${p.name}</span>
+                                                <input
+                                                    type="checkbox"
+                                                    ${p.visible ? 'checked' : ''}
+                                                    onchange="window.togglePersonalityVisibility('${id}')"
+                                                    class="w-5 h-5 accent-purple-600"
+                                                />
+                                            </label>
+                                        `).join('')}
+                                    </div>
+
+                                    <!-- Add Custom Personality -->
+                                    <div class="mb-6">
+                                        <h3 class="text-lg font-bold text-white mb-3">➕ Add Custom Personality</h3>
+                                        <input
+                                            type="text"
+                                            id="newPersonalityName"
+                                            value="${state.newPersonality.name}"
+                                            placeholder="Personality Name"
+                                            class="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500 mb-3"
+                                        />
+                                        <textarea
+                                            id="newPersonalityPrompt"
+                                            placeholder="System prompt"
+                                            class="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500 h-32 resize-none mb-3"
+                                        >${state.newPersonality.prompt}</textarea>
+                                        <label class="flex items-center gap-2 text-white mb-3 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                id="newPersonalityVisible"
+                                                ${state.newPersonality.visible ? 'checked' : ''}
+                                                class="w-5 h-5 accent-purple-600"
+                                            />
+                                            <span>Visible to others</span>
+                                        </label>
+                                        <button
+                                            onclick="window.addCustomPersonality()"
+                                            class="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors"
+                                        >
+                                            Add Personality
+                                        </button>
+                                    </div>
+
+                                    <!-- Sharing Instructions -->
+                                    <div class="mb-6 p-4 bg-blue-900 bg-opacity-30 border border-blue-700 rounded-lg">
+                                        <h3 class="text-blue-400 font-bold mb-2">📌 How to Share This App</h3>
+                                        <ol class="text-sm text-slate-300 space-y-1 list-decimal list-inside">
+                                            <li>Add your Groq API key above (line 16: EMBEDDED_API_KEY)</li>
+                                            <li>Configure your personalities</li>
+                                            <li>Hide any personalities you don't want shared</li>
+                                            <li>Change ADMIN_PASSWORD (line 15)</li>
+                                            <li>Set LOCKED_MODE to true (line 14)</li>
+                                            <li>Save and share! Users can use it immediately without setup</li>
+                                        </ol>
+                                    </div>
+                                `}
+
+                                <!-- Close Button -->
+                                <button
+                                    onclick="window.toggleSettings()"
+                                    class="w-full px-6 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium transition-colors"
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+
+            // Setup input listeners
+            const messageInput = document.getElementById('messageInput');
+            if (messageInput) {
+                messageInput.addEventListener('input', (e) => {
+                    state.input = e.target.value;
+                });
+                messageInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        sendMessage();
+                    }
+                });
+            }
+
+            const apiKeyInput = document.getElementById('apiKeyInput');
+            if (apiKeyInput) {
+                apiKeyInput.addEventListener('input', (e) => {
+                    updateApiKey(e.target.value);
+                    render();
+                });
+            }
+
+            const newPersonalityName = document.getElementById('newPersonalityName');
+            if (newPersonalityName) {
+                newPersonalityName.addEventListener('input', (e) => {
+                    state.newPersonality.name = e.target.value;
+                });
+            }
+
+            const newPersonalityPrompt = document.getElementById('newPersonalityPrompt');
+            if (newPersonalityPrompt) {
+                newPersonalityPrompt.addEventListener('input', (e) => {
+                    state.newPersonality.prompt = e.target.value;
+                });
+            }
+
+            const newPersonalityVisible = document.getElementById('newPersonalityVisible');
+            if (newPersonalityVisible) {
+                newPersonalityVisible.addEventListener('change', (e) => {
+                    state.newPersonality.visible = e.target.checked;
+                });
+            }
+
+            const passwordInput = document.getElementById('passwordInput');
+            if (passwordInput) {
+                passwordInput.addEventListener('input', (e) => {
+                    state.passwordInput = e.target.value;
+                });
+                passwordInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        checkPassword();
+                    }
+                });
+            }
+        }
+
+        // Expose functions to window
+        window.sendMessage = sendMessage;
+        window.clearChat = clearChat;
+        window.selectPersonality = selectPersonality;
+        window.toggleSettings = () => {
+            state.showSettings = !state.showSettings;
+            render();
+        };
+        window.checkPassword = checkPassword;
+        window.addCustomPersonality = addCustomPersonality;
+        window.togglePersonalityVisibility = togglePersonalityVisibility;
+
+        // Initial render
+        render();
+    </script>
+</body>
+</html>
